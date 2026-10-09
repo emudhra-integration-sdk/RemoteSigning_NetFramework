@@ -137,6 +137,17 @@ namespace RDSA
             return this;
         }
 
+        /// <summary>
+        /// Sets the number of bytes reserved in the PDF for the signature returned by the service
+        /// (default <see cref="RDSAInput.DefaultSignatureSize"/>). Increase it if signing fails with RDSA-114;
+        /// that error message states the size required.
+        /// </summary>
+        public RDSAInputBuilder SetSignatureSize(int signatureSize)
+        {
+            rdsa.SignatureSize = signatureSize;
+            return this;
+        }
+
         public RDSAInput Build()
         {
             return rdsa;
