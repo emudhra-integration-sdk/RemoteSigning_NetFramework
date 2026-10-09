@@ -1,4 +1,5 @@
 ﻿using eSign.text.pdf;
+using System.IO;
 
 namespace RDSA
 {
@@ -12,5 +13,7 @@ namespace RDSA
         public string ErrorCode { get; set; }
         public Status SignedStatus { get; set; }
         internal PdfSignatureAppearance SignatureAppreance { get; set; }
+        internal FileStream TempFileStream { get; set; }
+        internal int SignatureSize { get; set; }
     }
 }

@@ -32,6 +32,18 @@ namespace RDSA
         public AdvanceSignature advanceSignature { get; internal set; }
         public SignatureImagePosition ImagePosition { get; internal set; }
 
+        /// <summary>
+        /// Default number of bytes reserved in the PDF for the signature returned by the service.
+        /// Covers the service's LTV signatures (certificate chain + CRLs + timestamp token, ~20.1 KB) with headroom for CRL growth.
+        /// </summary>
+        public const int DefaultSignatureSize = 24000;
+
+        /// <summary>
+        /// Number of bytes reserved in the PDF for the signature returned by the service.
+        /// Set with <see cref="RDSAInputBuilder.SetSignatureSize(int)"/>; defaults to <see cref="DefaultSignatureSize"/>.
+        /// </summary>
+        public int SignatureSize { get; internal set; } = DefaultSignatureSize;
+
         internal RDSAInput(string DocBase64) { this.DocBase64 = DocBase64; }
 
         /// <summary>This method creates RDSAInput constructor. RDSAInput

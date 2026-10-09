@@ -94,7 +94,6 @@ namespace RDSA
             try
             {
                 string Timestamp = DateTimeOffset.Now.ToString("yyyy-MM-ddTHH:mm:sszzz");
-                int ContentEstimated = 20000;
                 string OrganizationID = string.Empty;
                 List<ReturnDocument> returnDocuments = new List<ReturnDocument>() { };
                 TransactionID = string.IsNullOrWhiteSpace(TransactionID) ? DateTime.Now.ToString("yyyyMMddHHmmssfff") : TransactionID;
@@ -132,6 +131,15 @@ namespace RDSA
                     serviceReturn.ErrorMessage = $"Inputs can contain maximum of only 10 RDSAInput";
                     return serviceReturn;
                 }
+                for (int i = 0; i < Inputs.Count; i++)
+                {
+                    if (Inputs[i] != null && Inputs[i].SignatureSize <= 0)
+                    {
+                        serviceReturn.ErrorCode = "RDSA-115";
+                        serviceReturn.ErrorMessage = $"Invalid SignatureSize {Inputs[i].SignatureSize} for input {i + 1}, it must be greater than 0";
+                        return serviceReturn;
+                    }
+                }
                 if (string.IsNullOrWhiteSpace(TempFolder))
                 {
                     serviceReturn.ErrorCode = "RDSA-104";
@@ -148,6 +156,7 @@ namespace RDSA
                 int DocID = 1;
                 foreach (RDSAInput Input in Inputs)
                 {
+                    os = null;
                     try
                     {
                         byte[] PDFdocument = Convert.FromBase64String(Input.DocBase64.ToString().Trim());
@@ -458,7 +467,7 @@ namespace RDSA
                         }
                         Dictionary<PdfName, int> exc = new Dictionary<PdfName, int>
                         {
-                            [PdfName.CONTENTS] = ContentEstimated * 2 + 2
+                            [PdfName.CONTENTS] = Input.SignatureSize * 2 + 2
                         };
                         PdfSignature dic = new PdfSignature(PdfName.ADOBE_PPKLITE, PdfName.ADBE_PKCS7_DETACHED)
                         {
@@ -475,8 +484,8 @@ namespace RDSA
                         #endregion
                         HashAlgorithm sha = new SHA256CryptoServiceProvider();
                         int read = 0;
-                        byte[] buff = new byte[ContentEstimated];
-                        while ((read = ostr.Read(buff, 0, ContentEstimated)) > 0)
+                        byte[] buff = new byte[8192];
+                        while ((read = ostr.Read(buff, 0, buff.Length)) > 0)
                         {
                             sha.TransformBlock(buff, 0, read, buff, 0);
                         }
@@ -488,7 +497,9 @@ namespace RDSA
                             DocumentHash = hashdocument,
                             DocId = DocID,
                             TempFilePath = TempFilePath,
-                            SignatureAppreance = signatureAppearance
+                            SignatureAppreance = signatureAppearance,
+                            TempFileStream = os,
+                            SignatureSize = Input.SignatureSize
                         });
 
                         DocID++;
@@ -573,7 +584,7 @@ namespace RDSA
                 List<ReturnDocument> docsToReturn = new List<ReturnDocument>() { };
                 foreach (XmlNode DocumentSignature in DocumentSignatureNodes)
                 {
-                    int index = 0;
+                    ReturnDocument returnDocument = null;
                     try
                     {
                         string DocumentID = DocumentSignature?.Attributes["id"]?.Value ?? "";
@@ -600,7 +611,7 @@ namespace RDSA
                             continue;
                         }
 
-                        ReturnDocument returnDocument = returnDocuments.Where(i => i.DocId == docId).First();
+                        returnDocument = returnDocuments.Where(i => i.DocId == docId).FirstOrDefault();
                         if (returnDocument == null)
                         {
                             ReturnDocument returnDoc = new ReturnDocument
@@ -617,6 +628,7 @@ namespace RDSA
                         string ErrorMessage = DocumentSignature?.Attributes["docErrorMessage"]?.Value ?? "";
                         if (!string.IsNullOrWhiteSpace(ErrorCode))
                         {
+                            CloseFileStream(returnDocument.TempFileStream);
                             returnDocument.ErrorCode = ErrorCode;
                             returnDocument.ErrorMessage = ErrorMessage;
                             returnDocument.SignedStatus = Status.Failure;
@@ -627,7 +639,18 @@ namespace RDSA
                         string signedHash = DocumentSignature.InnerText;
                         PdfSignatureAppearance pdfSignatureAppearance = returnDocument.SignatureAppreance;
                         byte[] sigbytes = Convert.FromBase64String(signedHash);
-                        byte[] paddedSig = new byte[ContentEstimated];
+                        if (sigbytes.Length > returnDocument.SignatureSize)
+                        {
+                            // The reserved size is part of the signed hash, so this document must be prepared and signed again.
+                            CloseFileStream(returnDocument.TempFileStream);
+                            returnDocument.ErrorCode = "RDSA-114";
+                            returnDocument.ErrorMessage = $"Signature returned by the service is {sigbytes.Length} bytes but SignatureSize is {returnDocument.SignatureSize}; set SignatureSize to at least {sigbytes.Length} and sign again";
+                            returnDocument.SignedStatus = Status.Failure;
+                            returnDocument.SignatureAppreance = null;
+                            docsToReturn.Add(returnDocument);
+                            continue;
+                        }
+                        byte[] paddedSig = new byte[returnDocument.SignatureSize];
                         Array.Copy(sigbytes, 0, paddedSig, 0, sigbytes.Length);
                         PdfDictionary dic2 = new PdfDictionary();
                         dic2.Put(PdfName.CONTENTS, new PdfString(paddedSig).SetHexWriting(true));
@@ -637,18 +660,19 @@ namespace RDSA
                         returnDocument.SignedStatus = Status.Success;
                         returnDocument.SignatureAppreance = null;
                         docsToReturn.Add(returnDocument);
-                        index++;
                     }
                     catch (Exception ex)
                     {
-                        CloseFileStream(fileStreamsVariables[index]);
-                        ReturnDocument returnDocument = new ReturnDocument
+                        CloseFileStream(returnDocument?.TempFileStream);
+                        ReturnDocument failedDocument = new ReturnDocument
                         {
+                            DocId = returnDocument?.DocId ?? 0,
+                            TempFilePath = returnDocument?.TempFilePath,
                             ErrorCode = "RDSA=113",
                             ErrorMessage = $"Unable to complete signature - {ex.Message}",
                             SignedStatus = Status.Failure
                         };
-                        docsToReturn.Add(returnDocument);
+                        docsToReturn.Add(failedDocument);
                         continue;
                     }
                 }
@@ -676,7 +700,7 @@ namespace RDSA
 
         public void CloseFileStream(FileStream fileStream)
         {
-            if (fileStream.CanWrite)
+            if (fileStream != null && fileStream.CanWrite)
                 fileStream.Close();
         }
     }

@@ -73,6 +73,7 @@ RDSAInput input = RDSAInputBuilder.Init(pdfAsBase64)
     .SetPageTobeSigned(Page.FIRST)
     .SetCoordinates(Coordinates.Bottom_Right)
     .SetTickRequired(true)
+    .SetSignatureSize(24000)   // optional; bytes reserved for the signature (default 24000)
     .Build();
 
 // 3. Sign (up to 10 documents per call).
@@ -101,6 +102,20 @@ else
 `tempFolder` must be writable; the library writes intermediate PDFs there as
 `{transactionId}_{docId}.pdf` and reads them back after signing. It is not
 auto-cleaned.
+
+### Signature size
+
+Before hashing, the library reserves space in the PDF for the PKCS#7 signature the
+service returns. The size is set per document with `SetSignatureSize(bytes)`
+(default `RDSAInput.DefaultSignatureSize` = 24000), so it can be changed without
+rebuilding the library.
+
+The service returns LTV signatures — certificate chain, CRLs and a timestamp token —
+which measured ~20,090 bytes for a Class 3 Document Signer certificate. Most of the
+growth comes from the issuing CA's CRL (about 26 bytes per revoked certificate). If the
+signature does not fit, the document fails with `RDSA-114`, and the message states the
+size required; raise `SetSignatureSize` to at least that value and sign again. Each
+reserved byte adds 2 bytes to the signed PDF, so avoid very large values.
 
 ## How signing works
 
@@ -149,6 +164,8 @@ Inspect `ReturnStatus`, and per-document `SignedStatus` / `ErrorCode` /
 | `RDSA-110` | No signature node in the response. |
 | `RDSA-111` / `RDSA-112` | Document ID in the response could not be matched. |
 | `RDSA-113` | Failed to embed the returned signature. |
+| `RDSA-114` | Returned signature is larger than `SignatureSize` (per document); the message states the size required. |
+| `RDSA-115` | `SignatureSize` of an input is 0 or negative. |
 | `RDSA-120` | Content-search text not found in the PDF. |
 | `RDSA-999` | Unhandled error (see `ErrorMessage`). |
 
